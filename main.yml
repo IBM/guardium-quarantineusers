@@ -1,0 +1,44 @@
+---
+- name: Check for 'UNAUTH01' in 'DB User Name' column of CSV file and Execute REST API commands for UNAUTH01
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - vars.yaml  tasks:
+    - name: Read CSV file
+      slurp:
+        src: "{{ csv_file_path }}"
+      register: csv_file_content    - name: Convert CSV file content to string
+      set_fact:
+        csv_file_str: "{{ csv_file_content.content | b64decode }}"    - name: Parse CSV file
+      community.general.read_csv:
+        path: "{{ csv_file_path }}"
+      register: csv_data    - name: Check for 'UNAUTH01' in 'DB User Name' column
+      set_fact:
+        is_user_found: "{{ csv_data.list | selectattr('DB User Name', 'equalto', target_user) | list | length > 0 }}"    - name: Register result
+      set_fact:
+        db_user: "{{ target_user if is_user_found else 'default_user' }}"    - name: Display result
+      debug:
+        msg: "The user '{{ db_user }}' is used for the quarantine command."    - name: Call OAuth token API
+      uri:
+        url: "{{ oauth_url }}"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "{{ client_id }}"
+          client_secret: "{{ client_secret }}"
+          grant_type: "{{ grant_type }}"
+          username: "{{ username }}"
+          password: "{{ password }}"
+        validate_certs: no
+      register: auth_response    - name: Parse access token
+      set_fact:
+        access_token: "{{ auth_response.json.access_token }}"    - name: Execute quarantine command for specified user
+      shell: |
+        curl_output=$(curl -k --header "Authorization:Bearer {{ access_token }}" --include --header "Content-Type: application/json" -X POST --data '{"dbUser":"{{ db_user }}","quarantineUntil":"{{ quarantine_until }}","serverIp":"{{ server_ip }}","serviceName":"{{ service_name }}","type":"normal"}' {{ quarantine_url }})
+        echo "$curl_output"
+      args:
+        executable: /bin/bash
+      register: quarantine_response    - name: Print quarantine response for specified user
+      debug:
+        var: quarantine_response.stdout_lines
+
